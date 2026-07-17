@@ -14,7 +14,15 @@ pelo próprio menu da bolinha (🔊/🔇).
 Requisitos: macOS + [Claude Code](https://claude.com/claude-code). O instalador
 cuida do resto (instala o SwiftBar via Homebrew se precisar).
 
-Recebeu o arquivo `claude-traffic-light-installer.sh`? Um comando só:
+### Recebeu o `claude-traffic-light.zip`? (duplo clique)
+
+1. Duplo clique no zip — vira `Instalar Claude Traffic Light.command`.
+2. **Clique direito** no `.command` → **Abrir** → **Abrir** de novo no aviso.
+   (Só na primeira vez — o macOS bloqueia duplo clique direto em script baixado
+   de fora, sem assinatura de desenvolvedor.)
+3. O Terminal abre, instala tudo e avisa quando terminar.
+
+### Recebeu o `claude-traffic-light-installer.sh`? (terminal)
 
 ```bash
 bash ~/Downloads/claude-traffic-light-installer.sh
