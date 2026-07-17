@@ -95,7 +95,15 @@ chmod +x "$PLUGIN_DIR/claude-light.5s.sh"
 echo "   Plugin copiado para $PLUGIN_DIR"
 
 echo "==> Iniciando SwiftBar"
-open -a SwiftBar
+# Logo após o brew instalar, "open -a SwiftBar" pode falhar (LaunchServices
+# ainda não indexou o app) — abre pelo caminho e nunca aborta a instalação aqui.
+if [ -d "/Applications/SwiftBar.app" ]; then
+    open "/Applications/SwiftBar.app" || true
+elif [ -d "$HOME/Applications/SwiftBar.app" ]; then
+    open "$HOME/Applications/SwiftBar.app" || true
+else
+    open -a SwiftBar 2>/dev/null || echo "   Não consegui abrir sozinho — abra o SwiftBar pelo Launchpad."
+fi
 
 echo ""
 echo "Pronto! 🚦 A bolinha deve aparecer na barra de menu."
