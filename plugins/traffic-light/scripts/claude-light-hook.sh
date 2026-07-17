@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # claude-light-hook.sh <state>
-# state: running | waiting | done | end
+# state: prompt | running | waiting | done | end
+# "prompt" = UserPromptSubmit: same as running, but marks the turn as
+# user-initiated so its sounds are allowed to play.
 #
 # Called by Claude Code hooks. Reads the hook JSON payload from stdin,
 # extracts session_id and writes the current state for THIS instance.
@@ -26,6 +28,34 @@ print("".join(c for c in sid if c.isalnum() or c in "-_") or "default")
 ' 2>/dev/null || echo default)"
 
 FILE="$DIR/$SID.state"
+FLAG="$DIR/$SID.prompted"
+
+# Owning `claude` process PID, for liveness detection. A session that dies
+# abnormally (crash, kill, closed window) never fires Stop/SessionEnd, so its
+# state file would stay "running" until the STALE timeout — a ghost yellow
+# light with nothing running. We record the claude PID here and the display
+# script ignores files whose process is gone. Walk up the ancestry (the hook
+# may run under a transient shell) to the first ancestor named exactly
+# `claude`; fall back to empty (display then uses the time-based STALE check).
+OWNER_PID=""
+p="$PPID"
+for _ in 1 2 3 4 5 6; do
+    [ -n "$p" ] && [ "$p" != "0" ] || break
+    read -r pp comm < <(/bin/ps -o ppid=,comm= -p "$p" 2>/dev/null)
+    case "$(basename "${comm:-}")" in
+        claude) OWNER_PID="$p"; break ;;
+    esac
+    p="$pp"
+done
+
+# Only turns the user started get sounds. Claude Code re-invokes the agent
+# on its own when background work finishes (subagents, background Bash,
+# scheduled wakeups) — those turns fire the same hooks but never
+# UserPromptSubmit, so without this flag they would beep at nothing.
+if [ "$STATE" = "prompt" ]; then
+    STATE="running"
+    touch "$FLAG"
+fi
 
 # Sound mode: silent | traffic | beep. Set via the SwiftBar dropdown
 # (writes $DIR/sound-mode). Legacy "muted" flag file counts as silent.
@@ -86,12 +116,21 @@ if ! /usr/bin/pgrep -xq SwiftBar; then
     SOUND_DONE=""
 fi
 
-prev="$(cat "$FILE" 2>/dev/null || true)"
+# State file format: "<state> <owner_pid>" (pid optional, may be absent in
+# files written by older versions). Read back just the state token.
+prev="$(cut -d' ' -f1 "$FILE" 2>/dev/null || true)"
 
 if [ "$STATE" = "end" ]; then
-    rm -f "$FILE"
+    rm -f "$FILE" "$FLAG"
 else
-    printf '%s' "$STATE" > "$FILE"
+    printf '%s %s' "$STATE" "$OWNER_PID" > "$FILE"
+fi
+
+# Background turns (no user prompt since last Stop) never make noise —
+# the light still updates, but only user-initiated turns may beep.
+if [ ! -f "$FLAG" ]; then
+    SOUND=""
+    SOUND_DONE=""
 fi
 
 # Alert only on state transitions — no repeat while state unchanged.
@@ -99,6 +138,11 @@ if [ "$STATE" = "waiting" ] && [ "$prev" != "waiting" ] && [ -n "$SOUND" ] && [ 
     ( /usr/bin/afplay "$SOUND" >/dev/null 2>&1 & )
 elif [ "$STATE" = "done" ] && [ "$prev" = "running" ] && [ -n "$SOUND_DONE" ] && [ -f "$SOUND_DONE" ]; then
     ( /usr/bin/afplay "$SOUND_DONE" >/dev/null 2>&1 & )
+fi
+
+# Turn over: the next sound requires a fresh user prompt.
+if [ "$STATE" = "done" ]; then
+    rm -f "$FLAG"
 fi
 
 # Best-effort: nudge SwiftBar to refresh instantly. Only when it is already

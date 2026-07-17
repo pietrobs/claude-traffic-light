@@ -17,16 +17,22 @@ red=0; yellow=0; running_n=0; waiting_n=0; done_n=0
 if [ -d "$DIR" ]; then
     for f in "$DIR"/*.state; do
         [ -e "$f" ] || continue
-        st=$(cat "$f" 2>/dev/null)
+        # Format: "<state> <owner_pid>" (pid optional in files from older versions).
+        read -r st pid < "$f" 2>/dev/null
         mt=$(stat -f %m "$f" 2>/dev/null || echo "$now")
         age=$(( now - mt ))
+        # Liveness: if the owning claude process is gone, the session died
+        # without firing Stop/SessionEnd — ignore its stale running/waiting.
+        # When no pid was recorded, fall back to the time-based STALE window.
+        if [ -n "$pid" ]; then
+            /bin/kill -0 "$pid" 2>/dev/null || continue
+        elif [ "$age" -ge "$STALE" ]; then
+            continue
+        fi
         case "$st" in
-            waiting)
-                if [ "$age" -lt "$STALE" ]; then red=1; waiting_n=$((waiting_n+1)); fi ;;
-            running)
-                if [ "$age" -lt "$STALE" ]; then yellow=1; running_n=$((running_n+1)); fi ;;
-            done)
-                done_n=$((done_n+1)) ;;
+            waiting) red=1; waiting_n=$((waiting_n+1)) ;;
+            running) yellow=1; running_n=$((running_n+1)) ;;
+            done)    done_n=$((done_n+1)) ;;
         esac
     done
 fi

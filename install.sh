@@ -46,7 +46,9 @@ hooks = data.setdefault("hooks", {})
 
 # event -> (state, matcher_needed)
 mapping = {
-    "UserPromptSubmit": ("running", False),
+    # "prompt" marca o turno como iniciado pelo usuário — só esses turnos
+    # tocam som; turnos de background (subagentes, wakeups) ficam mudos.
+    "UserPromptSubmit": ("prompt", False),
     "PreToolUse":       ("running", True),
     # PermissionRequest dispara depois do PreToolUse; sem isto o vermelho fica preso após aprovar.
     "PostToolUse":      ("running", True),
@@ -56,6 +58,16 @@ mapping = {
     "Stop":             ("done",    False),
     "SessionEnd":       ("end",     False),
 }
+
+# Migração: instalações antigas registravam UserPromptSubmit -> "running".
+old_cmd = f'"{hook}" running'
+for g in hooks.get("UserPromptSubmit", []):
+    if isinstance(g, dict):
+        g["hooks"] = [h for h in g.get("hooks", []) if h.get("command") != old_cmd]
+hooks["UserPromptSubmit"] = [
+    g for g in hooks.get("UserPromptSubmit", [])
+    if not (isinstance(g, dict) and not g.get("hooks"))
+]
 
 for event, (state, needs_matcher) in mapping.items():
     cmd = f'"{hook}" {state}'
