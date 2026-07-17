@@ -85,6 +85,14 @@ esac
 SOUND="${CLAUDE_LIGHT_SOUND:-$SOUND}"
 SOUND_DONE="${CLAUDE_LIGHT_SOUND_DONE:-$SOUND_DONE}"
 
+# No SwiftBar running = user quit the menu bar app = they don't want the
+# feature making noise. State files still get written so the light is
+# correct if SwiftBar comes back.
+if ! /usr/bin/pgrep -xq SwiftBar; then
+    SOUND=""
+    SOUND_DONE=""
+fi
+
 prev="$(cat "$FILE" 2>/dev/null || true)"
 
 if [ "$STATE" = "end" ]; then
@@ -100,8 +108,11 @@ elif [ "$STATE" = "done" ] && [ "$prev" = "running" ] && [ -n "$SOUND_DONE" ] &&
     ( /usr/bin/afplay "$SOUND_DONE" >/dev/null 2>&1 & )
 fi
 
-# Best-effort: nudge SwiftBar to refresh instantly (ignored if not installed).
-/usr/bin/open -g "swiftbar://refreshplugin?name=claude-light.5s.sh" >/dev/null 2>&1 || true
+# Best-effort: nudge SwiftBar to refresh instantly. Only when it is already
+# running — `open` on the URL scheme would otherwise RELAUNCH a quit SwiftBar.
+if /usr/bin/pgrep -xq SwiftBar; then
+    /usr/bin/open -g "swiftbar://refreshplugin?name=claude-light.5s.sh" >/dev/null 2>&1 || true
+fi
 
 exit 0
 EOF_claude_light_hook_sh
