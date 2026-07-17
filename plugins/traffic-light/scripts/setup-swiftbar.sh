@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# Configura a camada de display (SwiftBar) do Claude Traffic Light.
+# - Instala o SwiftBar via Homebrew se preciso
+# - Configura a pasta de plugins do SwiftBar
+# - Copia claude-light.5s.sh para lá e inicia o SwiftBar
+# Idempotente: pode rodar de novo pra atualizar.
+
+set -euo pipefail
+
+SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+echo "==> Verificando SwiftBar"
+if [ ! -d "/Applications/SwiftBar.app" ] && [ ! -d "$HOME/Applications/SwiftBar.app" ]; then
+    if command -v brew >/dev/null 2>&1; then
+        echo "   SwiftBar não encontrado — instalando via Homebrew..."
+        brew install --cask swiftbar
+    else
+        echo "   ERRO: SwiftBar não está instalado e o Homebrew não foi encontrado."
+        echo "   Instale o SwiftBar (https://swiftbar.app ou 'brew install --cask swiftbar')"
+        echo "   e rode este setup de novo."
+        exit 1
+    fi
+fi
+
+echo "==> Configurando pasta de plugins do SwiftBar"
+# Fecha o SwiftBar antes de mexer nas preferências (senão ele sobrescreve ao sair).
+killall SwiftBar 2>/dev/null || true
+PLUGIN_DIR="$(defaults read com.ameba.SwiftBar PluginDirectory 2>/dev/null || true)"
+if [ -z "${PLUGIN_DIR:-}" ]; then
+    PLUGIN_DIR="$HOME/SwiftBarPlugins"
+    defaults write com.ameba.SwiftBar PluginDirectory "$PLUGIN_DIR"
+    echo "   Pasta de plugins definida: $PLUGIN_DIR"
+fi
+PLUGIN_DIR="${PLUGIN_DIR/#\~/$HOME}"
+mkdir -p "$PLUGIN_DIR"
+cp "$SRC_DIR/claude-light.5s.sh" "$PLUGIN_DIR/claude-light.5s.sh"
+chmod +x "$PLUGIN_DIR/claude-light.5s.sh"
+echo "   Plugin copiado para $PLUGIN_DIR"
+
+echo "==> Iniciando SwiftBar"
+# Logo após o brew instalar, "open -a SwiftBar" pode falhar (LaunchServices
+# ainda não indexou o app) — abre pelo caminho e nunca aborta a instalação aqui.
+if [ -d "/Applications/SwiftBar.app" ]; then
+    open "/Applications/SwiftBar.app" || true
+elif [ -d "$HOME/Applications/SwiftBar.app" ]; then
+    open "$HOME/Applications/SwiftBar.app" || true
+else
+    open -a SwiftBar 2>/dev/null || echo "   Não consegui abrir sozinho — abra o SwiftBar pelo Launchpad."
+fi
+
+echo ""
+echo "Pronto! 🚦 A bolinha deve aparecer na barra de menu."

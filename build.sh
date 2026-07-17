@@ -15,14 +15,18 @@ CMD_OUT="$OUT_DIR/Instalar Claude Traffic Light.command"
 ZIP_OUT="$OUT_DIR/claude-traffic-light.zip"
 mkdir -p "$OUT_DIR"
 
+SCRIPTS="plugins/traffic-light/scripts"
+
 emit_payload() {
     echo 'TMP="$(mktemp -d)"'
     echo "trap 'rm -rf \"\$TMP\"' EXIT"
-    for f in claude-light-hook.sh claude-light.5s.sh install.sh; do
-        local delim
+    for path in "$SCRIPTS/claude-light-hook.sh" "$SCRIPTS/claude-light.5s.sh" \
+                "$SCRIPTS/setup-swiftbar.sh" install.sh; do
+        local f delim
+        f="$(basename "$path")"
         delim="EOF_$(printf '%s' "$f" | tr -c 'A-Za-z0-9' '_')"
         echo "cat > \"\$TMP/$f\" <<'$delim'"
-        cat "$SRC/$f"
+        cat "$SRC/$path"
         echo "$delim"
     done
     echo 'chmod +x "$TMP"/*.sh'

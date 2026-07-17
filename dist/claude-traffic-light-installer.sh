@@ -34,9 +34,56 @@ print("".join(c for c in sid if c.isalnum() or c in "-_") or "default")
 
 FILE="$DIR/$SID.state"
 
-# Sounds per state transition (empty = silent).
-SOUND="${CLAUDE_LIGHT_SOUND:-/System/Library/Sounds/Glass.aiff}"
-SOUND_DONE="${CLAUDE_LIGHT_SOUND_DONE:-/System/Library/Sounds/Hero.aiff}"
+# Sound mode: silent | traffic | beep. Set via the SwiftBar dropdown
+# (writes $DIR/sound-mode). Legacy "muted" flag file counts as silent.
+MODE="$(cat "$DIR/sound-mode" 2>/dev/null || true)"
+if [ -z "$MODE" ]; then
+    if [ -f "$DIR/muted" ]; then MODE="silent"; else MODE="traffic"; fi
+fi
+
+HORN="$DIR/horn.wav"
+if [ "$MODE" = "traffic" ] && [ ! -f "$HORN" ]; then
+    # Synthesize the car horn on first use (no binary assets to ship).
+    /usr/bin/python3 - "$HORN" <<'PY' >/dev/null 2>&1 || true
+import sys, wave, math, struct
+
+SR = 44100
+DUR = 0.9
+freqs = [(420, 1.0), (505, 0.9)]                      # classic dual-tone horn
+harmonics = [(1, 1.0), (2, 0.55), (3, 0.35), (4, 0.18), (5, 0.08)]
+
+frames = bytearray()
+for i in range(int(SR * DUR)):
+    t = i / SR
+    if t < 0.02:
+        env = t / 0.02
+    elif t > DUR - 0.08:
+        env = (DUR - t) / 0.08
+    else:
+        env = 1.0
+    s = sum(a * ha * math.sin(2 * math.pi * f * h * t)
+            for f, a in freqs for h, ha in harmonics)
+    s = max(-1.0, min(1.0, s * 0.12)) * env
+    frames += struct.pack('<h', int(s * 32767))
+
+with wave.open(sys.argv[1], 'wb') as w:
+    w.setnchannels(1)
+    w.setsampwidth(2)
+    w.setframerate(SR)
+    w.writeframes(bytes(frames))
+PY
+fi
+
+case "$MODE" in
+    silent)  SOUND=""; SOUND_DONE="" ;;
+    beep)    SOUND="/System/Library/Sounds/Glass.aiff"
+             SOUND_DONE="/System/Library/Sounds/Hero.aiff" ;;
+    *)       SOUND="$HORN"
+             SOUND_DONE="/System/Library/Sounds/Hero.aiff" ;;
+esac
+# Env vars still override whatever the mode picked (empty = silent).
+SOUND="${CLAUDE_LIGHT_SOUND:-$SOUND}"
+SOUND_DONE="${CLAUDE_LIGHT_SOUND_DONE:-$SOUND_DONE}"
 
 prev="$(cat "$FILE" 2>/dev/null || true)"
 
@@ -47,10 +94,7 @@ else
 fi
 
 # Alert only on state transitions — no repeat while state unchanged.
-# Mute toggle lives in the SwiftBar dropdown (creates/removes this flag file).
-if [ -f "$DIR/muted" ]; then
-    :
-elif [ "$STATE" = "waiting" ] && [ "$prev" != "waiting" ] && [ -n "$SOUND" ] && [ -f "$SOUND" ]; then
+if [ "$STATE" = "waiting" ] && [ "$prev" != "waiting" ] && [ -n "$SOUND" ] && [ -f "$SOUND" ]; then
     ( /usr/bin/afplay "$SOUND" >/dev/null 2>&1 & )
 elif [ "$STATE" = "done" ] && [ "$prev" = "running" ] && [ -n "$SOUND_DONE" ] && [ -f "$SOUND_DONE" ]; then
     ( /usr/bin/afplay "$SOUND_DONE" >/dev/null 2>&1 & )
@@ -110,31 +154,106 @@ echo "---"
 echo "Claude: $label | color=#888888"
 echo "Rodando: $running_n · Esperando: $waiting_n · Concluídas: $done_n | color=#888888"
 echo "---"
-if [ -f "$DIR/muted" ]; then
-    echo "🔇 Som desligado — clique para ligar | bash=/bin/bash param1=-c param2=\"rm -f '$DIR/muted'\" terminal=false refresh=true"
-else
-    echo "🔊 Som ligado — clique para desligar | bash=/bin/bash param1=-c param2=\"touch '$DIR/muted'\" terminal=false refresh=true"
+# Sound mode selector (legacy "muted" flag counts as silent).
+MODE="$(cat "$DIR/sound-mode" 2>/dev/null)"
+if [ -z "$MODE" ]; then
+    if [ -f "$DIR/muted" ]; then MODE="silent"; else MODE="traffic"; fi
 fi
+case "$MODE" in
+    silent) mode_label="🔇 Silencioso" ;;
+    beep)   mode_label="🔔 Beep" ;;
+    *)      mode_label="🚗 Buzina" ;;
+esac
+mark() { [ "$MODE" = "$1" ] && echo "✓ " || echo ""; }
+set_mode="printf %s MODENAME > '$DIR/sound-mode'; rm -f '$DIR/muted'"
+echo "Som: $mode_label"
+echo "--$(mark traffic)🚗 Buzina | bash=/bin/bash param1=-c param2=\"${set_mode/MODENAME/traffic}\" terminal=false refresh=true"
+echo "--$(mark beep)🔔 Beep | bash=/bin/bash param1=-c param2=\"${set_mode/MODENAME/beep}\" terminal=false refresh=true"
+echo "--$(mark silent)🔇 Silencioso | bash=/bin/bash param1=-c param2=\"${set_mode/MODENAME/silent}\" terminal=false refresh=true"
 echo "Limpar estados concluídos | bash=/bin/bash param1=-c param2=\"rm -f '$DIR'/*.state\" terminal=false refresh=true"
 echo "Atualizar | refresh=true"
 EOF_claude_light_5s_sh
-cat > "$TMP/install.sh" <<'EOF_install_sh'
+cat > "$TMP/setup-swiftbar.sh" <<'EOF_setup_swiftbar_sh'
 #!/usr/bin/env bash
-# Instalador do Claude Traffic Light (menu bar, macOS).
-# - Copia o hook para ~/.claude-traffic-light/
-# - Faz merge idempotente dos hooks em ~/.claude/settings.json
-# - Instala o plugin do SwiftBar (se o diretório de plugins estiver configurado)
+# Configura a camada de display (SwiftBar) do Claude Traffic Light.
+# - Instala o SwiftBar via Homebrew se preciso
+# - Configura a pasta de plugins do SwiftBar
+# - Copia claude-light.5s.sh para lá e inicia o SwiftBar
+# Idempotente: pode rodar de novo pra atualizar.
 
 set -euo pipefail
 
 SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+echo "==> Verificando SwiftBar"
+if [ ! -d "/Applications/SwiftBar.app" ] && [ ! -d "$HOME/Applications/SwiftBar.app" ]; then
+    if command -v brew >/dev/null 2>&1; then
+        echo "   SwiftBar não encontrado — instalando via Homebrew..."
+        brew install --cask swiftbar
+    else
+        echo "   ERRO: SwiftBar não está instalado e o Homebrew não foi encontrado."
+        echo "   Instale o SwiftBar (https://swiftbar.app ou 'brew install --cask swiftbar')"
+        echo "   e rode este setup de novo."
+        exit 1
+    fi
+fi
+
+echo "==> Configurando pasta de plugins do SwiftBar"
+# Fecha o SwiftBar antes de mexer nas preferências (senão ele sobrescreve ao sair).
+killall SwiftBar 2>/dev/null || true
+PLUGIN_DIR="$(defaults read com.ameba.SwiftBar PluginDirectory 2>/dev/null || true)"
+if [ -z "${PLUGIN_DIR:-}" ]; then
+    PLUGIN_DIR="$HOME/SwiftBarPlugins"
+    defaults write com.ameba.SwiftBar PluginDirectory "$PLUGIN_DIR"
+    echo "   Pasta de plugins definida: $PLUGIN_DIR"
+fi
+PLUGIN_DIR="${PLUGIN_DIR/#\~/$HOME}"
+mkdir -p "$PLUGIN_DIR"
+cp "$SRC_DIR/claude-light.5s.sh" "$PLUGIN_DIR/claude-light.5s.sh"
+chmod +x "$PLUGIN_DIR/claude-light.5s.sh"
+echo "   Plugin copiado para $PLUGIN_DIR"
+
+echo "==> Iniciando SwiftBar"
+# Logo após o brew instalar, "open -a SwiftBar" pode falhar (LaunchServices
+# ainda não indexou o app) — abre pelo caminho e nunca aborta a instalação aqui.
+if [ -d "/Applications/SwiftBar.app" ]; then
+    open "/Applications/SwiftBar.app" || true
+elif [ -d "$HOME/Applications/SwiftBar.app" ]; then
+    open "$HOME/Applications/SwiftBar.app" || true
+else
+    open -a SwiftBar 2>/dev/null || echo "   Não consegui abrir sozinho — abra o SwiftBar pelo Launchpad."
+fi
+
+echo ""
+echo "Pronto! 🚦 A bolinha deve aparecer na barra de menu."
+EOF_setup_swiftbar_sh
+cat > "$TMP/install.sh" <<'EOF_install_sh'
+#!/usr/bin/env bash
+# Instalador do Claude Traffic Light (menu bar, macOS) — caminho SEM plugin.
+# Se você usa o plugin do Claude Code (claude plugin install traffic-light@...),
+# NÃO precisa deste script: os hooks vêm do plugin e o display via /traffic-light:setup.
+#
+# - Copia o hook para ~/.claude-traffic-light/
+# - Faz merge idempotente dos hooks em ~/.claude/settings.json
+# - Configura o SwiftBar via setup-swiftbar.sh
+
+set -euo pipefail
+
+SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# No zip gerado pelo build.sh os scripts ficam ao lado; no repo, em plugins/traffic-light/scripts.
+if [ -f "$SRC_DIR/claude-light-hook.sh" ]; then
+    SCRIPTS_DIR="$SRC_DIR"
+else
+    SCRIPTS_DIR="$SRC_DIR/plugins/traffic-light/scripts"
+fi
+
 APP_DIR="$HOME/.claude-traffic-light"
 HOOK="$APP_DIR/claude-light-hook.sh"
 
 echo "==> Instalando em $APP_DIR"
 mkdir -p "$APP_DIR"
-cp "$SRC_DIR/claude-light-hook.sh" "$HOOK"
-cp "$SRC_DIR/claude-light.5s.sh"   "$APP_DIR/claude-light.5s.sh"
+cp "$SCRIPTS_DIR/claude-light-hook.sh" "$HOOK"
+cp "$SCRIPTS_DIR/claude-light.5s.sh"   "$APP_DIR/claude-light.5s.sh"
 chmod +x "$HOOK" "$APP_DIR/claude-light.5s.sh"
 
 echo "==> Registrando hooks em ~/.claude/settings.json"
@@ -187,47 +306,8 @@ with open(settings, "w") as f:
 print("   settings.json atualizado")
 PY
 
-echo "==> Verificando SwiftBar"
-if [ ! -d "/Applications/SwiftBar.app" ] && [ ! -d "$HOME/Applications/SwiftBar.app" ]; then
-    if command -v brew >/dev/null 2>&1; then
-        echo "   SwiftBar não encontrado — instalando via Homebrew..."
-        brew install --cask swiftbar
-    else
-        echo "   ERRO: SwiftBar não está instalado e o Homebrew não foi encontrado."
-        echo "   Instale o SwiftBar (https://swiftbar.app ou 'brew install --cask swiftbar')"
-        echo "   e rode este instalador de novo."
-        exit 1
-    fi
-fi
+bash "$SCRIPTS_DIR/setup-swiftbar.sh"
 
-echo "==> Configurando pasta de plugins do SwiftBar"
-# Fecha o SwiftBar antes de mexer nas preferências (senão ele sobrescreve ao sair).
-killall SwiftBar 2>/dev/null || true
-PLUGIN_DIR="$(defaults read com.ameba.SwiftBar PluginDirectory 2>/dev/null || true)"
-if [ -z "${PLUGIN_DIR:-}" ]; then
-    PLUGIN_DIR="$HOME/SwiftBarPlugins"
-    defaults write com.ameba.SwiftBar PluginDirectory "$PLUGIN_DIR"
-    echo "   Pasta de plugins definida: $PLUGIN_DIR"
-fi
-PLUGIN_DIR="${PLUGIN_DIR/#\~/$HOME}"
-mkdir -p "$PLUGIN_DIR"
-cp "$SRC_DIR/claude-light.5s.sh" "$PLUGIN_DIR/claude-light.5s.sh"
-chmod +x "$PLUGIN_DIR/claude-light.5s.sh"
-echo "   Plugin copiado para $PLUGIN_DIR"
-
-echo "==> Iniciando SwiftBar"
-# Logo após o brew instalar, "open -a SwiftBar" pode falhar (LaunchServices
-# ainda não indexou o app) — abre pelo caminho e nunca aborta a instalação aqui.
-if [ -d "/Applications/SwiftBar.app" ]; then
-    open "/Applications/SwiftBar.app" || true
-elif [ -d "$HOME/Applications/SwiftBar.app" ]; then
-    open "$HOME/Applications/SwiftBar.app" || true
-else
-    open -a SwiftBar 2>/dev/null || echo "   Não consegui abrir sozinho — abra o SwiftBar pelo Launchpad."
-fi
-
-echo ""
-echo "Pronto! 🚦 A bolinha deve aparecer na barra de menu."
 echo "Abra uma NOVA sessão do Claude Code para os hooks entrarem em ação."
 EOF_install_sh
 chmod +x "$TMP"/*.sh

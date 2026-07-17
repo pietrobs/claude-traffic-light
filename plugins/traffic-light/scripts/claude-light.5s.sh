@@ -46,10 +46,21 @@ echo "---"
 echo "Claude: $label | color=#888888"
 echo "Rodando: $running_n · Esperando: $waiting_n · Concluídas: $done_n | color=#888888"
 echo "---"
-if [ -f "$DIR/muted" ]; then
-    echo "🔇 Som desligado — clique para ligar | bash=/bin/bash param1=-c param2=\"rm -f '$DIR/muted'\" terminal=false refresh=true"
-else
-    echo "🔊 Som ligado — clique para desligar | bash=/bin/bash param1=-c param2=\"touch '$DIR/muted'\" terminal=false refresh=true"
+# Sound mode selector (legacy "muted" flag counts as silent).
+MODE="$(cat "$DIR/sound-mode" 2>/dev/null)"
+if [ -z "$MODE" ]; then
+    if [ -f "$DIR/muted" ]; then MODE="silent"; else MODE="traffic"; fi
 fi
+case "$MODE" in
+    silent) mode_label="🔇 Silencioso" ;;
+    beep)   mode_label="🔔 Beep" ;;
+    *)      mode_label="🚗 Buzina" ;;
+esac
+mark() { [ "$MODE" = "$1" ] && echo "✓ " || echo ""; }
+set_mode="printf %s MODENAME > '$DIR/sound-mode'; rm -f '$DIR/muted'"
+echo "Som: $mode_label"
+echo "--$(mark traffic)🚗 Buzina | bash=/bin/bash param1=-c param2=\"${set_mode/MODENAME/traffic}\" terminal=false refresh=true"
+echo "--$(mark beep)🔔 Beep | bash=/bin/bash param1=-c param2=\"${set_mode/MODENAME/beep}\" terminal=false refresh=true"
+echo "--$(mark silent)🔇 Silencioso | bash=/bin/bash param1=-c param2=\"${set_mode/MODENAME/silent}\" terminal=false refresh=true"
 echo "Limpar estados concluídos | bash=/bin/bash param1=-c param2=\"rm -f '$DIR'/*.state\" terminal=false refresh=true"
 echo "Atualizar | refresh=true"

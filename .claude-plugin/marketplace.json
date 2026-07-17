@@ -1,0 +1,15 @@
+{
+  "name": "claude-traffic-light",
+  "description": "Semáforo do Claude Code na barra de menu do macOS (SwiftBar)",
+  "owner": {
+    "name": "Pietro Schiavinato",
+    "url": "https://github.com/pietrobs"
+  },
+  "plugins": [
+    {
+      "name": "traffic-light",
+      "source": "./plugins/traffic-light",
+      "description": "Semáforo do Claude Code na barra de menu do macOS (SwiftBar): amarelo rodando, vermelho esperando você, verde livre"
+    }
+  ]
+}

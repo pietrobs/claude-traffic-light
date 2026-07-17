@@ -1,19 +1,29 @@
 #!/usr/bin/env bash
-# Instalador do Claude Traffic Light (menu bar, macOS).
+# Instalador do Claude Traffic Light (menu bar, macOS) — caminho SEM plugin.
+# Se você usa o plugin do Claude Code (claude plugin install traffic-light@...),
+# NÃO precisa deste script: os hooks vêm do plugin e o display via /traffic-light:setup.
+#
 # - Copia o hook para ~/.claude-traffic-light/
 # - Faz merge idempotente dos hooks em ~/.claude/settings.json
-# - Instala o plugin do SwiftBar (se o diretório de plugins estiver configurado)
+# - Configura o SwiftBar via setup-swiftbar.sh
 
 set -euo pipefail
 
 SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# No zip gerado pelo build.sh os scripts ficam ao lado; no repo, em plugins/traffic-light/scripts.
+if [ -f "$SRC_DIR/claude-light-hook.sh" ]; then
+    SCRIPTS_DIR="$SRC_DIR"
+else
+    SCRIPTS_DIR="$SRC_DIR/plugins/traffic-light/scripts"
+fi
+
 APP_DIR="$HOME/.claude-traffic-light"
 HOOK="$APP_DIR/claude-light-hook.sh"
 
 echo "==> Instalando em $APP_DIR"
 mkdir -p "$APP_DIR"
-cp "$SRC_DIR/claude-light-hook.sh" "$HOOK"
-cp "$SRC_DIR/claude-light.5s.sh"   "$APP_DIR/claude-light.5s.sh"
+cp "$SCRIPTS_DIR/claude-light-hook.sh" "$HOOK"
+cp "$SCRIPTS_DIR/claude-light.5s.sh"   "$APP_DIR/claude-light.5s.sh"
 chmod +x "$HOOK" "$APP_DIR/claude-light.5s.sh"
 
 echo "==> Registrando hooks em ~/.claude/settings.json"
@@ -66,45 +76,6 @@ with open(settings, "w") as f:
 print("   settings.json atualizado")
 PY
 
-echo "==> Verificando SwiftBar"
-if [ ! -d "/Applications/SwiftBar.app" ] && [ ! -d "$HOME/Applications/SwiftBar.app" ]; then
-    if command -v brew >/dev/null 2>&1; then
-        echo "   SwiftBar não encontrado — instalando via Homebrew..."
-        brew install --cask swiftbar
-    else
-        echo "   ERRO: SwiftBar não está instalado e o Homebrew não foi encontrado."
-        echo "   Instale o SwiftBar (https://swiftbar.app ou 'brew install --cask swiftbar')"
-        echo "   e rode este instalador de novo."
-        exit 1
-    fi
-fi
+bash "$SCRIPTS_DIR/setup-swiftbar.sh"
 
-echo "==> Configurando pasta de plugins do SwiftBar"
-# Fecha o SwiftBar antes de mexer nas preferências (senão ele sobrescreve ao sair).
-killall SwiftBar 2>/dev/null || true
-PLUGIN_DIR="$(defaults read com.ameba.SwiftBar PluginDirectory 2>/dev/null || true)"
-if [ -z "${PLUGIN_DIR:-}" ]; then
-    PLUGIN_DIR="$HOME/SwiftBarPlugins"
-    defaults write com.ameba.SwiftBar PluginDirectory "$PLUGIN_DIR"
-    echo "   Pasta de plugins definida: $PLUGIN_DIR"
-fi
-PLUGIN_DIR="${PLUGIN_DIR/#\~/$HOME}"
-mkdir -p "$PLUGIN_DIR"
-cp "$SRC_DIR/claude-light.5s.sh" "$PLUGIN_DIR/claude-light.5s.sh"
-chmod +x "$PLUGIN_DIR/claude-light.5s.sh"
-echo "   Plugin copiado para $PLUGIN_DIR"
-
-echo "==> Iniciando SwiftBar"
-# Logo após o brew instalar, "open -a SwiftBar" pode falhar (LaunchServices
-# ainda não indexou o app) — abre pelo caminho e nunca aborta a instalação aqui.
-if [ -d "/Applications/SwiftBar.app" ]; then
-    open "/Applications/SwiftBar.app" || true
-elif [ -d "$HOME/Applications/SwiftBar.app" ]; then
-    open "$HOME/Applications/SwiftBar.app" || true
-else
-    open -a SwiftBar 2>/dev/null || echo "   Não consegui abrir sozinho — abra o SwiftBar pelo Launchpad."
-fi
-
-echo ""
-echo "Pronto! 🚦 A bolinha deve aparecer na barra de menu."
 echo "Abra uma NOVA sessão do Claude Code para os hooks entrarem em ação."

@@ -9,10 +9,35 @@ Semáforo do estado do Claude Code na barra de menu do Mac.
 Com som: 🔔 quando fica vermelho, 🎉 quando uma tarefa termina. Dá pra silenciar
 pelo próprio menu da bolinha (🔊/🔇).
 
-## Instalação
-
-Requisitos: macOS + [Claude Code](https://claude.com/claude-code). O instalador
+Requisitos: macOS + [Claude Code](https://claude.com/claude-code). O setup
 cuida do resto (instala o SwiftBar via Homebrew se precisar).
+
+## Instalação como plugin do Claude Code (recomendado)
+
+No terminal:
+
+```bash
+claude plugin marketplace add pietrobs/claude-traffic-light
+claude plugin install traffic-light@claude-traffic-light
+```
+
+(ou, dentro do Claude Code: `/plugin marketplace add pietrobs/claude-traffic-light`
+e `/plugin install traffic-light@claude-traffic-light`)
+
+Depois, dentro de uma sessão do Claude Code:
+
+```
+/traffic-light:setup
+```
+
+Isso instala o SwiftBar (via Homebrew, se preciso) e coloca a bolinha na barra
+de menu. Os hooks já vêm com o plugin — nada de mexer em `settings.json`.
+Atualizações chegam sozinhas junto com o plugin.
+
+Pra remover: `/traffic-light:remove` (tira a bolinha) e
+`claude plugin uninstall traffic-light@claude-traffic-light` (tira os hooks).
+
+## Instalação via zip (sem plugin)
 
 ### Recebeu o `claude-traffic-light.zip`? (duplo clique)
 
@@ -32,13 +57,17 @@ Depois abra uma **nova** sessão do Claude Code (os hooks são lidos no início 
 sessão). Pronto — a bolinha aparece na barra de menu.
 
 O instalador é idempotente: pode rodar de novo quantas vezes quiser (útil pra
-atualizar).
+atualizar). Esse caminho registra os hooks direto em `~/.claude/settings.json`.
+
+> Use **um** dos dois caminhos. Se instalar pelos dois, os hooks rodam em dobro
+> (inofensivo, mas desnecessário) — rode `./uninstall.sh` pra tirar a versão zip.
 
 ### A partir do repositório
 
 ```bash
-./install.sh      # instala direto
-./build.sh        # gera dist/claude-traffic-light-installer.sh pra distribuir
+./install.sh      # instala direto (caminho sem plugin)
+./build.sh        # gera dist/ (installer .sh, .command e zip) pra distribuir
+./uninstall.sh    # remove a versão sem plugin (hooks + bolinha)
 ```
 
 ## Como funciona
@@ -55,6 +84,11 @@ Duas camadas independentes:
    **vermelho > amarelo > verde** e mostra a bolinha. O hook ainda dá um
    "refresh" instantâneo no SwiftBar a cada mudança.
 
+No caminho **plugin**, os hooks vêm de `plugins/traffic-light/hooks/hooks.json`
+e rodam direto do cache do plugin (`${CLAUDE_PLUGIN_ROOT}`). No caminho **zip**,
+o `install.sh` copia o hook pra `~/.claude-traffic-light/` e registra em
+`~/.claude/settings.json`. A camada de display é idêntica nos dois.
+
 > Prioridade: se qualquer instância te espera, a luz fica vermelha — mesmo que
 > outra ainda esteja rodando.
 
@@ -65,14 +99,17 @@ Duas camadas independentes:
 
 ## Sons
 
-| Evento | Som padrão | Variável |
-|--------|-----------|----------|
-| Ficou vermelho | Glass.aiff | `CLAUDE_LIGHT_SOUND` |
-| Tarefa terminou | Hero.aiff | `CLAUDE_LIGHT_SOUND_DONE` |
+Três modos, escolhidos na bolinha → **Som**:
 
-- Silenciar/reativar: clique na bolinha → item 🔊/🔇.
-- Trocar som: edite as variáveis no topo de `~/.claude-traffic-light/claude-light-hook.sh`
-  (opções em `/System/Library/Sounds/`). Valor vazio = sem som.
+| Modo | Ficou vermelho | Tarefa terminou |
+|------|----------------|-----------------|
+| 🚗 Buzina (padrão) | buzina de carro (sintetizada na 1ª vez em `~/.claude-traffic-light/horn.wav`) | Hero.aiff |
+| 🔔 Beep | Glass.aiff | Hero.aiff |
+| 🔇 Silencioso | — | — |
+
+- Trocar por som próprio: exporte `CLAUDE_LIGHT_SOUND` / `CLAUDE_LIGHT_SOUND_DONE`
+  no ambiente (opções em `/System/Library/Sounds/`) — elas vencem o modo.
+  Valor vazio = sem som.
 - O som só toca na **transição** de estado (não fica repetindo).
 
 ## Testar sem esperar o Claude
@@ -97,9 +134,8 @@ rm "$DIR/teste.state"               # volta pro estado agregado real
 
 ## Desinstalar
 
-```bash
-./uninstall.sh
-```
+- **Plugin**: `/traffic-light:remove` + `claude plugin uninstall traffic-light@claude-traffic-light`
+- **Zip**: `./uninstall.sh`
 
-Remove hooks, plugin e estados. O SwiftBar em si fica (remova com
-`brew uninstall --cask swiftbar` se quiser).
+O SwiftBar em si fica nos dois casos (remova com `brew uninstall --cask swiftbar`
+se quiser).
