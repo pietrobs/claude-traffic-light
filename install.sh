@@ -66,20 +66,37 @@ with open(settings, "w") as f:
 print("   settings.json atualizado")
 PY
 
-echo "==> Instalando plugin do SwiftBar"
-PLUGIN_DIR="$(defaults read com.ameba.SwiftBar PluginDirectory 2>/dev/null || true)"
-if [ -n "${PLUGIN_DIR:-}" ] && [ -d "$PLUGIN_DIR" ]; then
-    cp "$SRC_DIR/claude-light.5s.sh" "$PLUGIN_DIR/claude-light.5s.sh"
-    chmod +x "$PLUGIN_DIR/claude-light.5s.sh"
-    echo "   Copiado para $PLUGIN_DIR"
-    open -g "swiftbar://refreshallplugins" >/dev/null 2>&1 || true
-else
-    echo "   SwiftBar ainda não tem pasta de plugins configurada."
-    echo "   1) brew install --cask swiftbar   (se ainda não tiver)"
-    echo "   2) Abra o SwiftBar e escolha uma pasta de plugins"
-    echo "   3) Copie manualmente:"
-    echo "        cp \"$APP_DIR/claude-light.5s.sh\" <sua-pasta-de-plugins>/"
+echo "==> Verificando SwiftBar"
+if [ ! -d "/Applications/SwiftBar.app" ] && [ ! -d "$HOME/Applications/SwiftBar.app" ]; then
+    if command -v brew >/dev/null 2>&1; then
+        echo "   SwiftBar não encontrado — instalando via Homebrew..."
+        brew install --cask swiftbar
+    else
+        echo "   ERRO: SwiftBar não está instalado e o Homebrew não foi encontrado."
+        echo "   Instale o SwiftBar (https://swiftbar.app ou 'brew install --cask swiftbar')"
+        echo "   e rode este instalador de novo."
+        exit 1
+    fi
 fi
 
+echo "==> Configurando pasta de plugins do SwiftBar"
+# Fecha o SwiftBar antes de mexer nas preferências (senão ele sobrescreve ao sair).
+killall SwiftBar 2>/dev/null || true
+PLUGIN_DIR="$(defaults read com.ameba.SwiftBar PluginDirectory 2>/dev/null || true)"
+if [ -z "${PLUGIN_DIR:-}" ]; then
+    PLUGIN_DIR="$HOME/SwiftBarPlugins"
+    defaults write com.ameba.SwiftBar PluginDirectory "$PLUGIN_DIR"
+    echo "   Pasta de plugins definida: $PLUGIN_DIR"
+fi
+PLUGIN_DIR="${PLUGIN_DIR/#\~/$HOME}"
+mkdir -p "$PLUGIN_DIR"
+cp "$SRC_DIR/claude-light.5s.sh" "$PLUGIN_DIR/claude-light.5s.sh"
+chmod +x "$PLUGIN_DIR/claude-light.5s.sh"
+echo "   Plugin copiado para $PLUGIN_DIR"
+
+echo "==> Iniciando SwiftBar"
+open -a SwiftBar
+
 echo ""
-echo "Pronto. Abra uma nova sessão do Claude Code para os hooks entrarem em ação."
+echo "Pronto! 🚦 A bolinha deve aparecer na barra de menu."
+echo "Abra uma NOVA sessão do Claude Code para os hooks entrarem em ação."
