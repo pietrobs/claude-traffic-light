@@ -20,7 +20,7 @@ SCRIPTS="plugins/traffic-light/scripts"
 emit_payload() {
     echo 'TMP="$(mktemp -d)"'
     echo "trap 'rm -rf \"\$TMP\"' EXIT"
-    for path in "$SCRIPTS/claude-light-hook.sh" "$SCRIPTS/claude-light.5s.sh" \
+    for path in "$SCRIPTS/claude-light-hook.sh" "$SCRIPTS/claude-light.30s.sh" \
                 "$SCRIPTS/setup-swiftbar.sh" install.sh; do
         local f delim
         f="$(basename "$path")"

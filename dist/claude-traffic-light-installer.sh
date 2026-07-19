@@ -22,17 +22,20 @@ DIR="$HOME/.claude-traffic-light"
 mkdir -p "$DIR"
 
 # Read the hook payload and pull out session_id (fallback: "default").
+# PostToolUse fires on every tool call, so avoid spawning python3 on the hot
+# path: session_id is a single-line JSON string, so a line-oriented sed pulls
+# it cheaply. Fall back to python only if the fast path finds nothing.
 INPUT="$(cat || true)"
-SID="$(printf '%s' "$INPUT" | /usr/bin/python3 -c '
-import sys, json
-try:
-    d = json.load(sys.stdin)
-    sid = str(d.get("session_id") or "default")
-except Exception:
-    sid = "default"
-# keep filename safe
-print("".join(c for c in sid if c.isalnum() or c in "-_") or "default")
-' 2>/dev/null || echo default)"
+SID="$(printf '%s' "$INPUT" | LC_ALL=C /usr/bin/sed -n \
+    's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+if [ -z "$SID" ]; then
+    SID="$(printf '%s' "$INPUT" | /usr/bin/python3 -c 'import sys,json
+try: print(json.load(sys.stdin).get("session_id") or "default")
+except Exception: print("default")' 2>/dev/null || echo default)"
+fi
+# Keep filename safe.
+SID="$(printf '%s' "$SID" | tr -cd 'A-Za-z0-9_-')"
+[ -n "$SID" ] || SID="default"
 
 FILE="$DIR/$SID.state"
 FLAG="$DIR/$SID.prompted"
@@ -59,9 +62,19 @@ done
 # on its own when background work finishes (subagents, background Bash,
 # scheduled wakeups) — those turns fire the same hooks but never
 # UserPromptSubmit, so without this flag they would beep at nothing.
+#
+# Belt-and-suspenders: even when a background re-invocation DOES fire
+# UserPromptSubmit, its payload carries an empty "user_message". Only arm the
+# flag for a genuine human prompt (non-empty user_message) — this guarantees
+# no sound from autonomous work after the answer ("pós prompt respondido").
+# Field absent (unexpected payload) → arm, keeping the old user-first default.
 if [ "$STATE" = "prompt" ]; then
     STATE="running"
-    touch "$FLAG"
+    if printf '%s' "$INPUT" | LC_ALL=C /usr/bin/grep -q '"user_message"[[:space:]]*:[[:space:]]*""'; then
+        :   # empty prompt = synthetic/background re-invocation — stay silent
+    else
+        touch "$FLAG"
+    fi
 fi
 
 # Sound mode: silent | traffic | beep. Set via the SwiftBar dropdown
@@ -155,12 +168,12 @@ fi
 # Best-effort: nudge SwiftBar to refresh instantly. Only when it is already
 # running — `open` on the URL scheme would otherwise RELAUNCH a quit SwiftBar.
 if /usr/bin/pgrep -xq SwiftBar; then
-    /usr/bin/open -g "swiftbar://refreshplugin?name=claude-light.5s.sh" >/dev/null 2>&1 || true
+    /usr/bin/open -g "swiftbar://refreshplugin?name=claude-light.30s.sh" >/dev/null 2>&1 || true
 fi
 
 exit 0
 EOF_claude_light_hook_sh
-cat > "$TMP/claude-light.5s.sh" <<'EOF_claude_light_5s_sh'
+cat > "$TMP/claude-light.30s.sh" <<'EOF_claude_light_30s_sh'
 #!/usr/bin/env bash
 # <xbar.title>Claude Traffic Light</xbar.title>
 # <xbar.desc>Semáforo do estado do Claude (amarelo=rodando, vermelho=esperando você, verde=livre)</xbar.desc>
@@ -233,13 +246,13 @@ echo "--$(mark beep)🔔 Beep | bash=/bin/bash param1=-c param2=\"${set_mode/MOD
 echo "--$(mark silent)🔇 Silencioso | bash=/bin/bash param1=-c param2=\"${set_mode/MODENAME/silent}\" terminal=false refresh=true"
 echo "Limpar estados concluídos | bash=/bin/bash param1=-c param2=\"rm -f '$DIR'/*.state\" terminal=false refresh=true"
 echo "Atualizar | refresh=true"
-EOF_claude_light_5s_sh
+EOF_claude_light_30s_sh
 cat > "$TMP/setup-swiftbar.sh" <<'EOF_setup_swiftbar_sh'
 #!/usr/bin/env bash
 # Configura a camada de display (SwiftBar) do Claude Traffic Light.
 # - Instala o SwiftBar via Homebrew se preciso
 # - Configura a pasta de plugins do SwiftBar
-# - Copia claude-light.5s.sh para lá e inicia o SwiftBar
+# - Copia claude-light.30s.sh para lá e inicia o SwiftBar
 # Idempotente: pode rodar de novo pra atualizar.
 
 set -euo pipefail
@@ -270,8 +283,11 @@ if [ -z "${PLUGIN_DIR:-}" ]; then
 fi
 PLUGIN_DIR="${PLUGIN_DIR/#\~/$HOME}"
 mkdir -p "$PLUGIN_DIR"
-cp "$SRC_DIR/claude-light.5s.sh" "$PLUGIN_DIR/claude-light.5s.sh"
-chmod +x "$PLUGIN_DIR/claude-light.5s.sh"
+# Remove qualquer versão anterior (nome antigo claude-light.5s.sh) antes de
+# copiar — senão o SwiftBar mostra DUAS bolinhas após a renomeação do intervalo.
+rm -f "$PLUGIN_DIR"/claude-light.*.sh
+cp "$SRC_DIR/claude-light.30s.sh" "$PLUGIN_DIR/claude-light.30s.sh"
+chmod +x "$PLUGIN_DIR/claude-light.30s.sh"
 echo "   Plugin copiado para $PLUGIN_DIR"
 
 echo "==> Iniciando SwiftBar"
@@ -314,8 +330,9 @@ HOOK="$APP_DIR/claude-light-hook.sh"
 echo "==> Instalando em $APP_DIR"
 mkdir -p "$APP_DIR"
 cp "$SCRIPTS_DIR/claude-light-hook.sh" "$HOOK"
-cp "$SCRIPTS_DIR/claude-light.5s.sh"   "$APP_DIR/claude-light.5s.sh"
-chmod +x "$HOOK" "$APP_DIR/claude-light.5s.sh"
+rm -f "$APP_DIR"/claude-light.*.sh   # limpa nome antigo (.5s) ao atualizar
+cp "$SCRIPTS_DIR/claude-light.30s.sh" "$APP_DIR/claude-light.30s.sh"
+chmod +x "$HOOK" "$APP_DIR/claude-light.30s.sh"
 
 echo "==> Registrando hooks em ~/.claude/settings.json"
 /usr/bin/python3 - "$HOOK" <<'PY'
@@ -340,11 +357,9 @@ mapping = {
     # "prompt" marca o turno como iniciado pelo usuário — só esses turnos
     # tocam som; turnos de background (subagentes, wakeups) ficam mudos.
     "UserPromptSubmit": ("prompt", False),
-    "PreToolUse":       ("running", True),
-    # PermissionRequest dispara depois do PreToolUse; sem isto o vermelho fica preso após aprovar.
+    # PostToolUse devolve o amarelo depois que você aprova uma permissão.
     "PostToolUse":      ("running", True),
-    "Notification":     ("waiting", False),
-    # Notification não dispara na extensão VSCode (issue #28774); PermissionRequest cobre lá.
+    # PermissionRequest funciona na CLI e na extensão VSCode.
     "PermissionRequest": ("waiting", True),
     "Stop":             ("done",    False),
     "SessionEnd":       ("end",     False),
@@ -359,6 +374,20 @@ hooks["UserPromptSubmit"] = [
     g for g in hooks.get("UserPromptSubmit", [])
     if not (isinstance(g, dict) and not g.get("hooks"))
 ]
+
+# Migração: versões anteriores registravam PreToolUse e Notification apontando
+# para este hook — agora removidos. Tira grupos nossos desses eventos.
+for event in ("PreToolUse", "Notification"):
+    kept = [
+        g for g in hooks.get(event, [])
+        if not (isinstance(g, dict)
+                and any("claude-light-hook.sh" in h.get("command", "")
+                        for h in g.get("hooks", [])))
+    ]
+    if kept:
+        hooks[event] = kept
+    elif event in hooks:
+        del hooks[event]
 
 for event, (state, needs_matcher) in mapping.items():
     cmd = f'"{hook}" {state}'

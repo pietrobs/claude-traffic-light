@@ -23,8 +23,9 @@ HOOK="$APP_DIR/claude-light-hook.sh"
 echo "==> Instalando em $APP_DIR"
 mkdir -p "$APP_DIR"
 cp "$SCRIPTS_DIR/claude-light-hook.sh" "$HOOK"
-cp "$SCRIPTS_DIR/claude-light.5s.sh"   "$APP_DIR/claude-light.5s.sh"
-chmod +x "$HOOK" "$APP_DIR/claude-light.5s.sh"
+rm -f "$APP_DIR"/claude-light.*.sh   # limpa nome antigo (.5s) ao atualizar
+cp "$SCRIPTS_DIR/claude-light.30s.sh" "$APP_DIR/claude-light.30s.sh"
+chmod +x "$HOOK" "$APP_DIR/claude-light.30s.sh"
 
 echo "==> Registrando hooks em ~/.claude/settings.json"
 /usr/bin/python3 - "$HOOK" <<'PY'
@@ -49,11 +50,9 @@ mapping = {
     # "prompt" marca o turno como iniciado pelo usuário — só esses turnos
     # tocam som; turnos de background (subagentes, wakeups) ficam mudos.
     "UserPromptSubmit": ("prompt", False),
-    "PreToolUse":       ("running", True),
-    # PermissionRequest dispara depois do PreToolUse; sem isto o vermelho fica preso após aprovar.
+    # PostToolUse devolve o amarelo depois que você aprova uma permissão.
     "PostToolUse":      ("running", True),
-    "Notification":     ("waiting", False),
-    # Notification não dispara na extensão VSCode (issue #28774); PermissionRequest cobre lá.
+    # PermissionRequest funciona na CLI e na extensão VSCode.
     "PermissionRequest": ("waiting", True),
     "Stop":             ("done",    False),
     "SessionEnd":       ("end",     False),
@@ -68,6 +67,20 @@ hooks["UserPromptSubmit"] = [
     g for g in hooks.get("UserPromptSubmit", [])
     if not (isinstance(g, dict) and not g.get("hooks"))
 ]
+
+# Migração: versões anteriores registravam PreToolUse e Notification apontando
+# para este hook — agora removidos. Tira grupos nossos desses eventos.
+for event in ("PreToolUse", "Notification"):
+    kept = [
+        g for g in hooks.get(event, [])
+        if not (isinstance(g, dict)
+                and any("claude-light-hook.sh" in h.get("command", "")
+                        for h in g.get("hooks", [])))
+    ]
+    if kept:
+        hooks[event] = kept
+    elif event in hooks:
+        del hooks[event]
 
 for event, (state, needs_matcher) in mapping.items():
     cmd = f'"{hook}" {state}'

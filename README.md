@@ -76,8 +76,8 @@ Duas camadas independentes:
 
 1. **Detecção** — hooks do Claude Code disparam em eventos do ciclo de vida e
    cada instância grava seu estado em `~/.claude-traffic-light/<session_id>.state`:
-   - `UserPromptSubmit` / `PreToolUse` / `PostToolUse` → `running`
-   - `PermissionRequest` / `Notification` → `waiting`
+   - `UserPromptSubmit` / `PostToolUse` → `running`
+   - `PermissionRequest` → `waiting`
    - `Stop` (terminou a resposta) → `done`
    - `SessionEnd` → apaga o arquivo
 2. **Display** — o plugin do SwiftBar lê todos os arquivos, aplica a prioridade
@@ -92,10 +92,13 @@ o `install.sh` copia o hook pra `~/.claude-traffic-light/` e registra em
 > Prioridade: se qualquer instância te espera, a luz fica vermelha — mesmo que
 > outra ainda esteja rodando.
 
-> Por que `PermissionRequest` E `Notification`? A extensão do VSCode não dispara
-> `Notification` (bug conhecido, anthropics/claude-code#28774). `PermissionRequest`
-> funciona nos dois. E `PostToolUse` devolve o amarelo depois que você aprova
-> uma permissão.
+> Por que só `PermissionRequest` (e não `Notification`)? `Notification` não
+> dispara na extensão do VSCode (bug conhecido, anthropics/claude-code#28774)
+> e, no modelo atual, era redundante com `PermissionRequest` — que funciona nos
+> dois. `PostToolUse` devolve o amarelo depois que você aprova uma permissão.
+> `PreToolUse` foi removido: o estado já é `running` antes de qualquer tool
+> (via `UserPromptSubmit`), então ele só duplicava disparos de hook em cada
+> chamada de ferramenta.
 
 ## Sons
 
@@ -124,7 +127,7 @@ rm "$DIR/teste.state"               # volta pro estado agregado real
 
 ## Ajustes
 
-- **Staleness**: no `claude-light.5s.sh`, `STALE=1800` ignora estados
+- **Staleness**: no `claude-light.30s.sh`, `STALE=1800` ignora estados
   `running`/`waiting` de sessões que morreram sem disparar `Stop` (30 min).
 - **Limitação conhecida**: na extensão do VSCode, quando o Claude termina e fica
   esperando sua próxima mensagem, o evento `idle_prompt` não dispara — esse caso

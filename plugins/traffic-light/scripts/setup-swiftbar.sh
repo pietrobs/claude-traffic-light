@@ -2,7 +2,7 @@
 # Configura a camada de display (SwiftBar) do Claude Traffic Light.
 # - Instala o SwiftBar via Homebrew se preciso
 # - Configura a pasta de plugins do SwiftBar
-# - Copia claude-light.5s.sh para lá e inicia o SwiftBar
+# - Copia claude-light.30s.sh para lá e inicia o SwiftBar
 # Idempotente: pode rodar de novo pra atualizar.
 
 set -euo pipefail
@@ -33,8 +33,11 @@ if [ -z "${PLUGIN_DIR:-}" ]; then
 fi
 PLUGIN_DIR="${PLUGIN_DIR/#\~/$HOME}"
 mkdir -p "$PLUGIN_DIR"
-cp "$SRC_DIR/claude-light.5s.sh" "$PLUGIN_DIR/claude-light.5s.sh"
-chmod +x "$PLUGIN_DIR/claude-light.5s.sh"
+# Remove qualquer versão anterior (nome antigo claude-light.5s.sh) antes de
+# copiar — senão o SwiftBar mostra DUAS bolinhas após a renomeação do intervalo.
+rm -f "$PLUGIN_DIR"/claude-light.*.sh
+cp "$SRC_DIR/claude-light.30s.sh" "$PLUGIN_DIR/claude-light.30s.sh"
+chmod +x "$PLUGIN_DIR/claude-light.30s.sh"
 echo "   Plugin copiado para $PLUGIN_DIR"
 
 echo "==> Iniciando SwiftBar"

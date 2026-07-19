@@ -15,17 +15,20 @@ DIR="$HOME/.claude-traffic-light"
 mkdir -p "$DIR"
 
 # Read the hook payload and pull out session_id (fallback: "default").
+# PostToolUse fires on every tool call, so avoid spawning python3 on the hot
+# path: session_id is a single-line JSON string, so a line-oriented sed pulls
+# it cheaply. Fall back to python only if the fast path finds nothing.
 INPUT="$(cat || true)"
-SID="$(printf '%s' "$INPUT" | /usr/bin/python3 -c '
-import sys, json
-try:
-    d = json.load(sys.stdin)
-    sid = str(d.get("session_id") or "default")
-except Exception:
-    sid = "default"
-# keep filename safe
-print("".join(c for c in sid if c.isalnum() or c in "-_") or "default")
-' 2>/dev/null || echo default)"
+SID="$(printf '%s' "$INPUT" | LC_ALL=C /usr/bin/sed -n \
+    's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+if [ -z "$SID" ]; then
+    SID="$(printf '%s' "$INPUT" | /usr/bin/python3 -c 'import sys,json
+try: print(json.load(sys.stdin).get("session_id") or "default")
+except Exception: print("default")' 2>/dev/null || echo default)"
+fi
+# Keep filename safe.
+SID="$(printf '%s' "$SID" | tr -cd 'A-Za-z0-9_-')"
+[ -n "$SID" ] || SID="default"
 
 FILE="$DIR/$SID.state"
 FLAG="$DIR/$SID.prompted"
@@ -52,9 +55,19 @@ done
 # on its own when background work finishes (subagents, background Bash,
 # scheduled wakeups) — those turns fire the same hooks but never
 # UserPromptSubmit, so without this flag they would beep at nothing.
+#
+# Belt-and-suspenders: even when a background re-invocation DOES fire
+# UserPromptSubmit, its payload carries an empty "user_message". Only arm the
+# flag for a genuine human prompt (non-empty user_message) — this guarantees
+# no sound from autonomous work after the answer ("pós prompt respondido").
+# Field absent (unexpected payload) → arm, keeping the old user-first default.
 if [ "$STATE" = "prompt" ]; then
     STATE="running"
-    touch "$FLAG"
+    if printf '%s' "$INPUT" | LC_ALL=C /usr/bin/grep -q '"user_message"[[:space:]]*:[[:space:]]*""'; then
+        :   # empty prompt = synthetic/background re-invocation — stay silent
+    else
+        touch "$FLAG"
+    fi
 fi
 
 # Sound mode: silent | traffic | beep. Set via the SwiftBar dropdown
@@ -148,7 +161,7 @@ fi
 # Best-effort: nudge SwiftBar to refresh instantly. Only when it is already
 # running — `open` on the URL scheme would otherwise RELAUNCH a quit SwiftBar.
 if /usr/bin/pgrep -xq SwiftBar; then
-    /usr/bin/open -g "swiftbar://refreshplugin?name=claude-light.5s.sh" >/dev/null 2>&1 || true
+    /usr/bin/open -g "swiftbar://refreshplugin?name=claude-light.30s.sh" >/dev/null 2>&1 || true
 fi
 
 exit 0
