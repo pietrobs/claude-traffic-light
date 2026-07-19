@@ -188,7 +188,7 @@ DIR="$HOME/.claude-traffic-light"
 STALE=1800   # seconds: a running/waiting file older than this = dead session, ignored
 
 now=$(date +%s)
-red=0; yellow=0; running_n=0; waiting_n=0; done_n=0
+red=0; yellow=0; running_n=0; waiting_n=0
 
 if [ -d "$DIR" ]; then
     for f in "$DIR"/*.state; do
@@ -208,7 +208,6 @@ if [ -d "$DIR" ]; then
         case "$st" in
             waiting) red=1; waiting_n=$((waiting_n+1)) ;;
             running) yellow=1; running_n=$((running_n+1)) ;;
-            done)    done_n=$((done_n+1)) ;;
         esac
     done
 fi
@@ -226,7 +225,7 @@ fi
 
 echo "---"
 echo "Claude: $label | color=#888888"
-echo "Rodando: $running_n · Esperando: $waiting_n · Concluídas: $done_n | color=#888888"
+echo "Rodando: $running_n · Esperando: $waiting_n | color=#888888"
 echo "---"
 # Sound mode selector (legacy "muted" flag counts as silent).
 MODE="$(cat "$DIR/sound-mode" 2>/dev/null)"
@@ -244,8 +243,10 @@ echo "Som: $mode_label"
 echo "--$(mark traffic)🚗 Buzina | bash=/bin/bash param1=-c param2=\"${set_mode/MODENAME/traffic}\" terminal=false refresh=true"
 echo "--$(mark beep)🔔 Beep | bash=/bin/bash param1=-c param2=\"${set_mode/MODENAME/beep}\" terminal=false refresh=true"
 echo "--$(mark silent)🔇 Silencioso | bash=/bin/bash param1=-c param2=\"${set_mode/MODENAME/silent}\" terminal=false refresh=true"
-echo "Limpar estados concluídos | bash=/bin/bash param1=-c param2=\"rm -f '$DIR'/*.state\" terminal=false refresh=true"
 echo "Atualizar | refresh=true"
+# Versão instalada (carimbada pelo setup em $DIR/version a partir do plugin.json).
+VER="$(cat "$DIR/version" 2>/dev/null)"
+[ -n "$VER" ] && echo "Versão $VER | color=#888888"
 EOF_claude_light_30s_sh
 cat > "$TMP/setup-swiftbar.sh" <<'EOF_setup_swiftbar_sh'
 #!/usr/bin/env bash
@@ -289,6 +290,19 @@ rm -f "$PLUGIN_DIR"/claude-light.*.sh
 cp "$SRC_DIR/claude-light.30s.sh" "$PLUGIN_DIR/claude-light.30s.sh"
 chmod +x "$PLUGIN_DIR/claude-light.30s.sh"
 echo "   Plugin copiado para $PLUGIN_DIR"
+
+# Carimba a versão instalada pro menu do display ler. Fonte: plugin.json
+# (caminho plugin). No caminho zip não há plugin.json — fica vazio e o
+# display simplesmente não mostra a linha de versão.
+APP_DIR="$HOME/.claude-traffic-light"
+mkdir -p "$APP_DIR"
+PJ="$SRC_DIR/../.claude-plugin/plugin.json"
+if [ -f "$PJ" ]; then
+    /usr/bin/python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("version",""))' \
+        "$PJ" > "$APP_DIR/version" 2>/dev/null || : > "$APP_DIR/version"
+else
+    : > "$APP_DIR/version"
+fi
 
 echo "==> Iniciando SwiftBar"
 # Logo após o brew instalar, "open -a SwiftBar" pode falhar (LaunchServices

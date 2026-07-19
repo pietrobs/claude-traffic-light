@@ -40,6 +40,19 @@ cp "$SRC_DIR/claude-light.30s.sh" "$PLUGIN_DIR/claude-light.30s.sh"
 chmod +x "$PLUGIN_DIR/claude-light.30s.sh"
 echo "   Plugin copiado para $PLUGIN_DIR"
 
+# Carimba a versão instalada pro menu do display ler. Fonte: plugin.json
+# (caminho plugin). No caminho zip não há plugin.json — fica vazio e o
+# display simplesmente não mostra a linha de versão.
+APP_DIR="$HOME/.claude-traffic-light"
+mkdir -p "$APP_DIR"
+PJ="$SRC_DIR/../.claude-plugin/plugin.json"
+if [ -f "$PJ" ]; then
+    /usr/bin/python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("version",""))' \
+        "$PJ" > "$APP_DIR/version" 2>/dev/null || : > "$APP_DIR/version"
+else
+    : > "$APP_DIR/version"
+fi
+
 echo "==> Iniciando SwiftBar"
 # Logo após o brew instalar, "open -a SwiftBar" pode falhar (LaunchServices
 # ainda não indexou o app) — abre pelo caminho e nunca aborta a instalação aqui.
