@@ -1,6 +1,6 @@
 {
   "name": "traffic-light",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Semáforo do Claude Code na barra de menu do macOS (SwiftBar): amarelo rodando, vermelho esperando você, verde livre. Rode /traffic-light:setup após instalar.",
   "author": {
     "name": "Pietro Schiavinato",

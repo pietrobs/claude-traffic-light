@@ -38,6 +38,10 @@ mkdir -p "$PLUGIN_DIR"
 rm -f "$PLUGIN_DIR"/claude-light.*.sh
 cp "$SRC_DIR/claude-light.30s.sh" "$PLUGIN_DIR/claude-light.30s.sh"
 chmod +x "$PLUGIN_DIR/claude-light.30s.sh"
+# focus-session.sh é chamado pelos itens de sessão do menu; precisa ficar ao
+# lado do display (o display o resolve via dirname "$0").
+cp "$SRC_DIR/focus-session.sh" "$PLUGIN_DIR/focus-session.sh"
+chmod +x "$PLUGIN_DIR/focus-session.sh"
 echo "   Plugin copiado para $PLUGIN_DIR"
 
 # Carimba a versão instalada pro menu do display ler. Fonte: plugin.json

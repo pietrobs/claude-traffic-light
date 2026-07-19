@@ -37,6 +37,13 @@ fi
 SID="$(printf '%s' "$SID" | tr -cd 'A-Za-z0-9_-')"
 [ -n "$SID" ] || SID="default"
 
+# Working directory of THIS session, so the display can label it by project
+# name and the "focus session" menu item can bring its VS Code window forward.
+# Same cheap sed-first approach as session_id; macOS paths carry no backslashes
+# to unescape, so the raw JSON string value is usable as-is.
+CWD="$(printf '%s' "$INPUT" | LC_ALL=C /usr/bin/sed -n \
+    's/.*"cwd"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+
 FILE="$DIR/$SID.state"
 FLAG="$DIR/$SID.prompted"
 
@@ -136,14 +143,15 @@ if ! /usr/bin/pgrep -xq SwiftBar; then
     SOUND_DONE=""
 fi
 
-# State file format: "<state> <owner_pid>" (pid optional, may be absent in
-# files written by older versions). Read back just the state token.
+# State file format: "<state> <owner_pid> <cwd>". owner_pid uses "-" when
+# unknown so the cwd field (which may contain spaces) always sits at token 3+.
+# Older files may lack pid/cwd; readers tolerate that.
 prev="$(cut -d' ' -f1 "$FILE" 2>/dev/null || true)"
 
 if [ "$STATE" = "end" ]; then
     rm -f "$FILE" "$FLAG"
 else
-    printf '%s %s' "$STATE" "$OWNER_PID" > "$FILE"
+    printf '%s %s %s' "$STATE" "${OWNER_PID:--}" "$CWD" > "$FILE"
 fi
 
 # Background turns (no user prompt since last Stop) never make noise —
@@ -177,45 +185,55 @@ cat > "$TMP/claude-light.30s.sh" <<'EOF_claude_light_30s_sh'
 #!/usr/bin/env bash
 # <xbar.title>Claude Traffic Light</xbar.title>
 # <xbar.desc>Semáforo do estado do Claude (amarelo=rodando, vermelho=esperando você, verde=livre)</xbar.desc>
-# <xbar.version>1.0</xbar.version>
+# <xbar.version>1.2</xbar.version>
 # <swiftbar.hideAbout>true</swiftbar.hideAbout>
 # <swiftbar.hideRunInTerminal>true</swiftbar.hideRunInTerminal>
 #
 # SwiftBar/xbar plugin. Reads every per-instance state file, applies priority
-# (waiting > running > free) and renders the light in the menu bar.
+# (waiting > running > free) and renders the light in the menu bar. The
+# dropdown lists each live session by project name; clicking one focuses its
+# VS Code window (via focus-session.sh).
 
 DIR="$HOME/.claude-traffic-light"
 STALE=1800   # seconds: a running/waiting file older than this = dead session, ignored
+# focus-session.sh is copied next to this script by setup-swiftbar.sh.
+SELF_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
+FOCUS="$SELF_DIR/focus-session.sh"
 
 now=$(date +%s)
-red=0; yellow=0; running_n=0; waiting_n=0
+running_n=0; waiting_n=0
+
+# Live sessions, one entry per array slot: state and cwd kept in parallel arrays.
+sess_state=(); sess_cwd=()
 
 if [ -d "$DIR" ]; then
     for f in "$DIR"/*.state; do
         [ -e "$f" ] || continue
-        # Format: "<state> <owner_pid>" (pid optional in files from older versions).
-        read -r st pid < "$f" 2>/dev/null
+        # Format: "<state> <owner_pid> <cwd>" (pid "-" when unknown; cwd may
+        # contain spaces and runs to end of line). Older files may omit fields.
+        read -r st pid cwd < "$f" 2>/dev/null
         mt=$(stat -f %m "$f" 2>/dev/null || echo "$now")
         age=$(( now - mt ))
         # Liveness: if the owning claude process is gone, the session died
-        # without firing Stop/SessionEnd — ignore its stale running/waiting.
-        # When no pid was recorded, fall back to the time-based STALE window.
-        if [ -n "$pid" ]; then
+        # without firing Stop/SessionEnd — ignore its stale state. When no pid
+        # was recorded ("-" or empty), fall back to the time-based STALE window.
+        if [ -n "$pid" ] && [ "$pid" != "-" ]; then
             /bin/kill -0 "$pid" 2>/dev/null || continue
         elif [ "$age" -ge "$STALE" ]; then
             continue
         fi
         case "$st" in
-            waiting) red=1; waiting_n=$((waiting_n+1)) ;;
-            running) yellow=1; running_n=$((running_n+1)) ;;
+            waiting) waiting_n=$((waiting_n+1)) ;;
+            running) running_n=$((running_n+1)) ;;
         esac
+        sess_state+=("$st"); sess_cwd+=("$cwd")
     done
 fi
 
-if [ "$red" -eq 1 ]; then
+if [ "$waiting_n" -gt 0 ]; then
     echo "🔴"
     label="Esperando você"
-elif [ "$yellow" -eq 1 ]; then
+elif [ "$running_n" -gt 0 ]; then
     echo "🟡"
     label="Rodando"
 else
@@ -226,6 +244,48 @@ fi
 echo "---"
 echo "Claude: $label | color=#888888"
 echo "Rodando: $running_n · Esperando: $waiting_n | color=#888888"
+
+# Project label from a cwd (basename). Falls back to "sessão" for old files.
+projname() { [ -n "$1" ] && basename "$1" || echo "sessão"; }
+# Emit a clickable session line that focuses its VS Code window.
+sessitem() { # <prefix> <emoji> <cwd>
+    local proj; proj="$(projname "$3")"
+    if [ -n "$3" ]; then
+        echo "$1$2 $proj | bash=\"$FOCUS\" param1=\"$3\" terminal=false refresh=false"
+    else
+        echo "$1$2 $proj | color=#888888"   # no cwd = nothing to focus
+    fi
+}
+
+total=${#sess_state[@]}
+
+# Sessions waiting on you, pinned to the top so a single click after opening
+# the menu jumps straight to the one asking for permission.
+if [ "$waiting_n" -gt 0 ]; then
+    echo "---"
+    echo "Esperando permissão | color=#cc3333"
+    for i in "${!sess_state[@]}"; do
+        [ "${sess_state[$i]}" = "waiting" ] || continue
+        sessitem "" "🔴" "${sess_cwd[$i]}"
+    done
+fi
+
+# All live sessions (running + free) with their state dot.
+echo "---"
+echo "Sessões ($total) | color=#888888"
+if [ "$total" -eq 0 ]; then
+    echo "Nenhuma sessão ativa | color=#888888"
+else
+    for i in "${!sess_state[@]}"; do
+        case "${sess_state[$i]}" in
+            waiting) continue ;;                 # already listed above
+            running) emoji="🟡" ;;
+            *)       emoji="🟢" ;;
+        esac
+        sessitem "" "$emoji" "${sess_cwd[$i]}"
+    done
+fi
+
 echo "---"
 # Sound mode selector (legacy "muted" flag counts as silent).
 MODE="$(cat "$DIR/sound-mode" 2>/dev/null)"
@@ -247,7 +307,45 @@ echo "Atualizar | refresh=true"
 # Versão instalada (carimbada pelo setup em $DIR/version a partir do plugin.json).
 VER="$(cat "$DIR/version" 2>/dev/null)"
 [ -n "$VER" ] && echo "Versão $VER | color=#888888"
+exit 0
 EOF_claude_light_30s_sh
+cat > "$TMP/focus-session.sh" <<'EOF_focus_session_sh'
+#!/usr/bin/env bash
+# focus-session.sh <cwd>
+# Traz para frente a janela do VS Code cuja pasta é <cwd>.
+#
+# Truque: `code <pasta>` — se a pasta já está aberta em alguma janela do
+# VS Code, o VS Code foca essa janela existente em vez de abrir outra. É o
+# jeito mais confiável de "ir para a sessão" sem depender de foco de aba.
+# Chamado pelos itens do menu do SwiftBar (display: claude-light.30s.sh).
+
+set -euo pipefail
+
+CWD="${1:-}"
+[ -n "$CWD" ] || exit 0
+
+# Resolve o binário `code` (SwiftBar roda com PATH mínimo, então tenta os
+# caminhos comuns antes de desistir).
+CODE=""
+for c in \
+    "$(command -v code 2>/dev/null || true)" \
+    "/usr/local/bin/code" \
+    "/opt/homebrew/bin/code" \
+    "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code" \
+    "$HOME/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code"; do
+    if [ -n "$c" ] && [ -x "$c" ]; then CODE="$c"; break; fi
+done
+
+if [ -n "$CODE" ] && [ -d "$CWD" ]; then
+    # Foca (ou reabre) a janela dessa pasta.
+    "$CODE" "$CWD" >/dev/null 2>&1 || true
+fi
+
+# Garante que o VS Code venha para frente mesmo se o `code` acima falhar.
+/usr/bin/open -a "Visual Studio Code" >/dev/null 2>&1 || true
+
+exit 0
+EOF_focus_session_sh
 cat > "$TMP/setup-swiftbar.sh" <<'EOF_setup_swiftbar_sh'
 #!/usr/bin/env bash
 # Configura a camada de display (SwiftBar) do Claude Traffic Light.
@@ -289,6 +387,10 @@ mkdir -p "$PLUGIN_DIR"
 rm -f "$PLUGIN_DIR"/claude-light.*.sh
 cp "$SRC_DIR/claude-light.30s.sh" "$PLUGIN_DIR/claude-light.30s.sh"
 chmod +x "$PLUGIN_DIR/claude-light.30s.sh"
+# focus-session.sh é chamado pelos itens de sessão do menu; precisa ficar ao
+# lado do display (o display o resolve via dirname "$0").
+cp "$SRC_DIR/focus-session.sh" "$PLUGIN_DIR/focus-session.sh"
+chmod +x "$PLUGIN_DIR/focus-session.sh"
 echo "   Plugin copiado para $PLUGIN_DIR"
 
 # Carimba a versão instalada pro menu do display ler. Fonte: plugin.json

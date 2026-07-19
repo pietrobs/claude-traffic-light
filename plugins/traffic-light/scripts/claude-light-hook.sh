@@ -30,6 +30,13 @@ fi
 SID="$(printf '%s' "$SID" | tr -cd 'A-Za-z0-9_-')"
 [ -n "$SID" ] || SID="default"
 
+# Working directory of THIS session, so the display can label it by project
+# name and the "focus session" menu item can bring its VS Code window forward.
+# Same cheap sed-first approach as session_id; macOS paths carry no backslashes
+# to unescape, so the raw JSON string value is usable as-is.
+CWD="$(printf '%s' "$INPUT" | LC_ALL=C /usr/bin/sed -n \
+    's/.*"cwd"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+
 FILE="$DIR/$SID.state"
 FLAG="$DIR/$SID.prompted"
 
@@ -50,6 +57,18 @@ for _ in 1 2 3 4 5 6; do
     esac
     p="$pp"
 done
+
+# Ignore headless / non-interactive claude runs (`claude -p …`, `--print`) —
+# e.g. the daily-log Stop hook, which spawns a one-shot claude. Those are not
+# sessions the user is watching; registering them creates phantom lights (and a
+# recursive Stop hook can spawn many). Detect via the owner's full command line
+# and bail before writing any state or playing sound.
+if [ -n "$OWNER_PID" ]; then
+    ocmd="$(/bin/ps -o command= -p "$OWNER_PID" 2>/dev/null)"
+    case "$ocmd" in
+        *" -p "*|*" --print"*) exit 0 ;;
+    esac
+fi
 
 # Only turns the user started get sounds. Claude Code re-invokes the agent
 # on its own when background work finishes (subagents, background Bash,
@@ -129,14 +148,15 @@ if ! /usr/bin/pgrep -xq SwiftBar; then
     SOUND_DONE=""
 fi
 
-# State file format: "<state> <owner_pid>" (pid optional, may be absent in
-# files written by older versions). Read back just the state token.
+# State file format: "<state> <owner_pid> <cwd>". owner_pid uses "-" when
+# unknown so the cwd field (which may contain spaces) always sits at token 3+.
+# Older files may lack pid/cwd; readers tolerate that.
 prev="$(cut -d' ' -f1 "$FILE" 2>/dev/null || true)"
 
 if [ "$STATE" = "end" ]; then
     rm -f "$FILE" "$FLAG"
 else
-    printf '%s %s' "$STATE" "$OWNER_PID" > "$FILE"
+    printf '%s %s %s' "$STATE" "${OWNER_PID:--}" "$CWD" > "$FILE"
 fi
 
 # Background turns (no user prompt since last Stop) never make noise —
